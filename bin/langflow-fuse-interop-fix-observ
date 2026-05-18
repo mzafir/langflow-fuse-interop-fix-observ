@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+"""Diagnose and guide the Langflow -> Langfuse observation evaluator fix."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+
+DEFAULT_VENV = Path.home() / ".langflow" / ".langflow-venv"
+TRACE_REL = Path("lib/python3.12/site-packages/langflow/services/tracing/langfuse.py")
+
+
+def run(cmd: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=check)
+
+
+def venv_python(venv: Path) -> Path:
+    candidates = [venv / "bin" / "python3", venv / "bin" / "python"]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    raise SystemExit(f"Langflow venv Python not found under: {venv}")
+
+
+def pip_show(py: Path, names: list[str]) -> dict[str, dict[str, str]]:
+    result = run([str(py), "-m", "pip", "show", *names], check=False)
+    packages: dict[str, dict[str, str]] = {}
+    current: dict[str, str] | None = None
+    for line in result.stdout.splitlines():
+        if not line.strip():
+            current = None
+            continue
+        if ": " not in line:
+            continue
+        key, value = line.split(": ", 1)
+        if key == "Name":
+            current = {}
+            packages[value.lower()] = current
+        if current is not None:
+            current[key] = value
+    return packages
+
+
+def trace_file(venv: Path) -> Path | None:
+    direct = venv / TRACE_REL
+    if direct.exists():
+        return direct
+    matches = list(venv.glob("lib/python*/site-packages/langflow/services/tracing/langfuse.py"))
+    return matches[0] if matches else None
+
+
+def local_langflow_version() -> str | None:
+    url = "http://127.0.0.1:7860/api/v1/version"
+    try:
+        with urllib.request.urlopen(url, timeout=2) as response:
+            body = response.read().decode("utf-8")
+        data = json.loads(body)
+        return data.get("version") or data.get("main_version")
+    except (OSError, urllib.error.URLError, json.JSONDecodeError):
+        return None
+
+
+def launchctl_getenv(key: str) -> bool:
+    if sys.platform != "darwin":
+        return False
+    try:
+        result = run(["launchctl", "getenv", key], check=False)
+    except FileNotFoundError:
+        return False
+    return bool(result.stdout.strip())
+
+
+def env_status() -> list[tuple[str, bool, bool]]:
+    keys = [
+        "LANGFUSE_PUBLIC_KEY",
+        "LANGFUSE_SECRET_KEY",
+        "LANGFUSE_BASE_URL",
+        "LANGFUSE_HOST",
+        "LANGFLOW_DEACTIVATE_TRACING",
+    ]
+    return [(key, bool(os.environ.get(key)), launchctl_getenv(key)) for key in keys]
+
+
+def doctor(args: argparse.Namespace) -> int:
+    venv = Path(args.venv).expanduser()
+    py = venv_python(venv)
+    packages = pip_show(py, ["langflow", "langflow-base", "lfx", "langfuse"])
+    tracer = trace_file(venv)
+
+    print("Langflow/Langfuse interop diagnostic")
+    print("=" * 40)
+    print(f"venv: {venv}")
+    print(f"python: {py}")
+    backend_version = local_langflow_version()
+    print(f"local backend: {backend_version or 'not reachable on 127.0.0.1:7860'}")
+    print()
+    print("packages:")
+    for name in ["langflow", "langflow-base", "lfx", "langfuse"]:
+        version = packages.get(name, {}).get("Version", "not installed")
+        print(f"  {name}: {version}")
+
+    print()
+    print("environment:")
+    for key, shell_present, launchd_present in env_status():
+        status = []
+        if shell_present:
+            status.append("shell")
+        if launchd_present:
+            status.append("launchd")
+        print(f"  {key}: {', '.join(status) if status else 'not set'}")
+
+    print()
+    print("tracer:")
+    if not tracer:
+        print("  langfuse.py: not found")
+        return 1
+
+    source = tracer.read_text(encoding="utf-8", errors="replace")
+    emits_generation = "start_generation" in source or 'as_type="generation"' in source or "as_type='generation'" in source
+    emits_span = "start_span" in source
+    has_flush = ".flush()" in source
+    print(f"  file: {tracer}")
+    print(f"  emits SPAN observations: {'yes' if emits_span else 'no'}")
+    print(f"  emits GENERATION observations: {'yes' if emits_generation else 'no'}")
+    print(f"  contains flush fix: {'yes' if has_flush else 'no'}")
+
+    print()
+    if emits_span and not emits_generation:
+        print("diagnosis: Langflow emits SPAN observations. Configure the Langfuse evaluator filter to Type = SPAN.")
+    elif emits_generation:
+        print("diagnosis: This tracer appears to emit generation observations; Type = GENERATION may be valid.")
+    else:
+        print("diagnosis: Could not identify the observation type from the tracer.")
+
+    if not has_flush:
+        print("warning: tracer does not contain flush(); consider upgrading Langflow to a version with the Langfuse flush fix.")
+
+    return 0
+
+
+def evaluator_steps(_: argparse.Namespace) -> int:
+    print(
+        """Confirmed Langfuse evaluator fix
+=================================
+
+1. Open the evaluator in Langfuse.
+2. Enable Edit Mode.
+3. Set Run on to Observations.
+4. Keep Run on live incoming observations enabled.
+5. Change the filter:
+
+   FROM: Type any of GENERATION
+   TO:   Type any of SPAN
+
+6. Remove the Environment filter while testing.
+7. Set Sampling to 100%.
+8. Save the evaluator.
+9. Run the Langflow flow again.
+10. Re-open the evaluator sample table.
+
+Expected result:
+
+   Matching SPAN observations appear in the sample table.
+
+Why this works:
+
+   Langflow's built-in Langfuse tracer emits SPAN observations via start_span().
+   A GENERATION-only evaluator filter matches zero Langflow observations.
+"""
+    )
+    return 0
+
+
+def upgrade_langflow_110(args: argparse.Namespace) -> int:
+    venv = Path(args.venv).expanduser()
+    py = venv_python(venv)
+    print(f"Installing Langflow release-1.10.0 into {venv}")
+    print("This uses the upstream GitHub release branch because 1.10.0 may not be on PyPI yet.")
+    cmd = [
+        str(py),
+        "-m",
+        "pip",
+        "install",
+        "--upgrade",
+        "lfx @ git+https://github.com/langflow-ai/langflow.git@release-1.10.0#subdirectory=src/lfx",
+        "langflow-base[complete] @ git+https://github.com/langflow-ai/langflow.git@release-1.10.0#subdirectory=src/backend/base",
+        "langflow @ git+https://github.com/langflow-ai/langflow.git@release-1.10.0",
+    ]
+    proc = subprocess.run(cmd)
+    return proc.returncode
+
+
+def all_steps(args: argparse.Namespace) -> int:
+    code = doctor(args)
+    print()
+    evaluator_steps(args)
+    return code
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--venv", default=str(DEFAULT_VENV), help="Langflow virtualenv path")
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("doctor", help="Inspect local Langflow/Langfuse state").set_defaults(func=doctor)
+    sub.add_parser("evaluator-steps", help="Print Langfuse evaluator UI fix steps").set_defaults(func=evaluator_steps)
+    sub.add_parser("upgrade-langflow-110", help="Install Langflow release-1.10.0 branch into the venv").set_defaults(
+        func=upgrade_langflow_110
+    )
+    sub.add_parser("all", help="Run doctor and print evaluator fix steps").set_defaults(func=all_steps)
+    return parser
+
+
+def main() -> int:
+    parser = build_parser()
+    args = parser.parse_args()
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
