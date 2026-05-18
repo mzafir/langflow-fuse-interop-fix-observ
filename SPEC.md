@@ -83,6 +83,7 @@ The docs must include:
 4. How to restart Langflow Desktop after env changes.
 5. How to avoid printing secret key values.
 6. How to avoid the wrong-region problem by keeping both host variables pointed at the confirmed working Langfuse Cloud region.
+7. That `https://us.cloud.langfuse.com` and the linked Google Doc instructions are US-region examples only, not universal defaults.
 
 ## Success criteria
 

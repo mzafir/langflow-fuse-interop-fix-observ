@@ -188,7 +188,9 @@ Why launchctl is needed:
    Langflow Desktop is a GUI app. GUI apps launched from Finder/Dock inherit
    environment variables from macOS launchd, not from your current terminal shell.
 
-Set or update the regional Langfuse host:
+Set or update the regional Langfuse host.
+
+US-region example:
 
    launchctl setenv LANGFUSE_BASE_URL "https://us.cloud.langfuse.com"
    launchctl setenv LANGFUSE_HOST "https://us.cloud.langfuse.com"
@@ -210,7 +212,9 @@ Check secret presence without printing values:
    [ -n "$(launchctl getenv LANGFUSE_PUBLIC_KEY)" ] && echo "LANGFUSE_PUBLIC_KEY is set"
    [ -n "$(launchctl getenv LANGFUSE_SECRET_KEY)" ] && echo "LANGFUSE_SECRET_KEY is set"
 
-Reset stale or wrong-region host values:
+Reset stale or wrong-region host values.
+
+US-region example:
 
    launchctl unsetenv LANGFUSE_BASE_URL
    launchctl unsetenv LANGFUSE_HOST
@@ -225,9 +229,10 @@ Restart Langflow Desktop after changes:
 Region-safety rule:
 
    Langfuse Cloud hosts are region-specific. Do not assume
-   https://cloud.langfuse.com is correct for every key. Keep LANGFUSE_BASE_URL
-   and LANGFUSE_HOST pointed to the same confirmed working region, such as
-   https://us.cloud.langfuse.com for US-region projects.
+   https://cloud.langfuse.com or https://us.cloud.langfuse.com is correct for
+   every key. Keep LANGFUSE_BASE_URL and LANGFUSE_HOST pointed to the same
+   confirmed working region. Use https://us.cloud.langfuse.com only for
+   US-region projects.
 """
     )
     return 0

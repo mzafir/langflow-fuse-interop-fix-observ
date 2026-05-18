@@ -62,6 +62,8 @@ Use this when Langflow Desktop has the wrong Langfuse host, no traces, auth fail
 
 Langflow Desktop inherits environment variables from macOS launchd. Use `launchctl setenv`, not shell-only `export`.
 
+US-region example:
+
 ```bash
 launchctl unsetenv LANGFUSE_BASE_URL
 launchctl unsetenv LANGFUSE_HOST
@@ -84,7 +86,7 @@ Do not print secret key values. To check secret presence:
 [ -n "$(launchctl getenv LANGFUSE_SECRET_KEY)" ] && echo "LANGFUSE_SECRET_KEY is set"
 ```
 
-Region rule: keep `LANGFUSE_BASE_URL` and `LANGFUSE_HOST` pointed to the same confirmed working Langfuse Cloud region. Do not assume `https://cloud.langfuse.com` is correct for all keys.
+Region rule: keep `LANGFUSE_BASE_URL` and `LANGFUSE_HOST` pointed to the same confirmed working Langfuse Cloud region. Do not assume `https://cloud.langfuse.com` or `https://us.cloud.langfuse.com` is correct for all keys. Use the US-region example only for US-region Langfuse projects.
 
 ## Optional Langflow upgrade
 

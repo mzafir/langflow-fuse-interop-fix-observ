@@ -27,11 +27,13 @@ Result:            No results
 
 This repo documents and automates the safe parts of the fix.
 
-Related setup notes can be linked from the broader implementation document:
+Related US-region setup notes can be linked from the broader implementation document:
 
 ```text
 https://docs.google.com/document/d/18Fkk57vFv8dI7nkWknJk4OzRCUR41Fca/edit
 ```
+
+That document is for **US-region Langfuse Cloud projects only**. For other Langfuse regions, replace `https://us.cloud.langfuse.com` with the region host that matches your Langfuse project.
 
 ## Confirmed working evaluator setup
 
@@ -74,7 +76,7 @@ It never prints API key values.
 
 ## macOS launchctl environment setup
 
-Langflow Desktop is launched by macOS, so shell-only exports like this are not enough:
+Langflow Desktop is launched by macOS, so shell-only exports like this are not enough. The host below is a **US-region example**:
 
 ```bash
 export LANGFUSE_BASE_URL=https://us.cloud.langfuse.com
@@ -84,7 +86,7 @@ Use `launchctl setenv` so GUI apps launched from Finder/Dock inherit the values.
 
 ### Set or update Langfuse environment variables
 
-Use the correct regional Langfuse Cloud host for your keys:
+Use the correct regional Langfuse Cloud host for your keys. For US-region projects:
 
 ```bash
 launchctl setenv LANGFUSE_BASE_URL "https://us.cloud.langfuse.com"
@@ -125,7 +127,7 @@ For secrets, prefer checking presence without printing the value:
 
 ### Reset stale or wrong values
 
-If Langflow is stuck on the wrong region, unset both host variables before setting the correct one:
+If Langflow is stuck on the wrong region, unset both host variables before setting the correct one. The example below resets to the US-region host:
 
 ```bash
 launchctl unsetenv LANGFUSE_BASE_URL
@@ -143,10 +145,10 @@ Langfuse Cloud hosts are region-specific. Keys that work on one regional host ca
 
 ```text
 https://cloud.langfuse.com     # may be wrong for US-region keys
-https://us.cloud.langfuse.com  # confirmed working for US-region keys
+https://us.cloud.langfuse.com  # US-region host
 ```
 
-Prefer `LANGFUSE_BASE_URL` because Langflow uses it first. Keep `LANGFUSE_HOST` set to the same value for backward compatibility.
+Prefer `LANGFUSE_BASE_URL` because Langflow uses it first. Keep `LANGFUSE_HOST` set to the same value for backward compatibility. Do not hard-code `https://us.cloud.langfuse.com` unless the Langfuse project is actually in the US region.
 
 If authentication fails or traces disappear after a restart:
 
