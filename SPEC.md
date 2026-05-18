@@ -52,7 +52,8 @@ The script must:
 4. Detect whether the Langflow tracer contains `flush()` behavior.
 5. Print the confirmed Langfuse UI fix steps.
 6. Avoid printing API keys or secrets.
-7. Optionally install Langflow's `release-1.10.0` branch when explicitly requested.
+7. Print launchctl setup/reset steps for `LANGFUSE_BASE_URL`, `LANGFUSE_HOST`, and tracing env variables.
+8. Optionally install Langflow's `release-1.10.0` branch when explicitly requested.
 
 ## Non-goals
 
@@ -66,8 +67,22 @@ The script must:
 |---|---|
 | `doctor` | Inspect Langflow/Langfuse local state. |
 | `evaluator-steps` | Print the confirmed UI steps. |
+| `launchctl-steps` | Print macOS launchctl env setup, reset, and region-safety steps. |
 | `upgrade-langflow-110` | Explicitly install Langflow `release-1.10.0` branch into the local venv. |
 | `all` | Run `doctor` and `evaluator-steps`. |
+
+## launchctl requirements
+
+The documentation must explain that Langflow Desktop inherits environment variables from macOS launchd, not from the user's current shell. Therefore `launchctl setenv` is required for GUI-launched Langflow Desktop.
+
+The docs must include:
+
+1. How to set `LANGFUSE_BASE_URL`.
+2. How to set `LANGFUSE_HOST` to the same regional URL for backward compatibility.
+3. How to unset stale values with `launchctl unsetenv`.
+4. How to restart Langflow Desktop after env changes.
+5. How to avoid printing secret key values.
+6. How to avoid the wrong-region problem by keeping both host variables pointed at the confirmed working Langfuse Cloud region.
 
 ## Success criteria
 
@@ -76,4 +91,3 @@ After applying the evaluator UI change and running a Langflow flow:
 ```text
 Langfuse evaluator sample table shows matching SPAN observations.
 ```
-

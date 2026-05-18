@@ -178,6 +178,61 @@ Why this works:
     return 0
 
 
+def launchctl_steps(_: argparse.Namespace) -> int:
+    print(
+        """macOS launchctl Langfuse environment setup
+=============================================
+
+Why launchctl is needed:
+
+   Langflow Desktop is a GUI app. GUI apps launched from Finder/Dock inherit
+   environment variables from macOS launchd, not from your current terminal shell.
+
+Set or update the regional Langfuse host:
+
+   launchctl setenv LANGFUSE_BASE_URL "https://us.cloud.langfuse.com"
+   launchctl setenv LANGFUSE_HOST "https://us.cloud.langfuse.com"
+   launchctl setenv LANGFLOW_DEACTIVATE_TRACING "False"
+
+Set keys without printing or committing them:
+
+   launchctl setenv LANGFUSE_PUBLIC_KEY "pk-lf-..."
+   launchctl setenv LANGFUSE_SECRET_KEY "sk-lf-..."
+
+Check non-secret values:
+
+   launchctl getenv LANGFUSE_BASE_URL
+   launchctl getenv LANGFUSE_HOST
+   launchctl getenv LANGFLOW_DEACTIVATE_TRACING
+
+Check secret presence without printing values:
+
+   [ -n "$(launchctl getenv LANGFUSE_PUBLIC_KEY)" ] && echo "LANGFUSE_PUBLIC_KEY is set"
+   [ -n "$(launchctl getenv LANGFUSE_SECRET_KEY)" ] && echo "LANGFUSE_SECRET_KEY is set"
+
+Reset stale or wrong-region host values:
+
+   launchctl unsetenv LANGFUSE_BASE_URL
+   launchctl unsetenv LANGFUSE_HOST
+   launchctl setenv LANGFUSE_BASE_URL "https://us.cloud.langfuse.com"
+   launchctl setenv LANGFUSE_HOST "https://us.cloud.langfuse.com"
+
+Restart Langflow Desktop after changes:
+
+   osascript -e 'tell application "Langflow " to quit' || true
+   open "/Applications/Langflow .app"
+
+Region-safety rule:
+
+   Langfuse Cloud hosts are region-specific. Do not assume
+   https://cloud.langfuse.com is correct for every key. Keep LANGFUSE_BASE_URL
+   and LANGFUSE_HOST pointed to the same confirmed working region, such as
+   https://us.cloud.langfuse.com for US-region projects.
+"""
+    )
+    return 0
+
+
 def upgrade_langflow_110(args: argparse.Namespace) -> int:
     venv = Path(args.venv).expanduser()
     py = venv_python(venv)
@@ -200,6 +255,8 @@ def upgrade_langflow_110(args: argparse.Namespace) -> int:
 def all_steps(args: argparse.Namespace) -> int:
     code = doctor(args)
     print()
+    launchctl_steps(args)
+    print()
     evaluator_steps(args)
     return code
 
@@ -210,6 +267,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("doctor", help="Inspect local Langflow/Langfuse state").set_defaults(func=doctor)
     sub.add_parser("evaluator-steps", help="Print Langfuse evaluator UI fix steps").set_defaults(func=evaluator_steps)
+    sub.add_parser("launchctl-steps", help="Print macOS launchctl env setup and reset steps").set_defaults(
+        func=launchctl_steps
+    )
     sub.add_parser("upgrade-langflow-110", help="Install Langflow release-1.10.0 branch into the venv").set_defaults(
         func=upgrade_langflow_110
     )

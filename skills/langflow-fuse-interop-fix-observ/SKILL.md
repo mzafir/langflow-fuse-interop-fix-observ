@@ -31,6 +31,7 @@ From the repo:
 ```bash
 cd /Users/abdwahab/code/langflow-fuse-interop-fix-observ
 bin/langflow-fuse-interop-fix-observ doctor
+bin/langflow-fuse-interop-fix-observ launchctl-steps
 bin/langflow-fuse-interop-fix-observ evaluator-steps
 ```
 
@@ -55,6 +56,36 @@ bin/langflow-fuse-interop-fix-observ all
 9. Run the Langflow flow again.
 10. Confirm the evaluator sample table shows rows.
 
+## launchctl env fix
+
+Use this when Langflow Desktop has the wrong Langfuse host, no traces, auth failures, or stale region settings.
+
+Langflow Desktop inherits environment variables from macOS launchd. Use `launchctl setenv`, not shell-only `export`.
+
+```bash
+launchctl unsetenv LANGFUSE_BASE_URL
+launchctl unsetenv LANGFUSE_HOST
+launchctl setenv LANGFUSE_BASE_URL "https://us.cloud.langfuse.com"
+launchctl setenv LANGFUSE_HOST "https://us.cloud.langfuse.com"
+launchctl setenv LANGFLOW_DEACTIVATE_TRACING "False"
+```
+
+Restart Langflow Desktop:
+
+```bash
+osascript -e 'tell application "Langflow " to quit' || true
+open "/Applications/Langflow .app"
+```
+
+Do not print secret key values. To check secret presence:
+
+```bash
+[ -n "$(launchctl getenv LANGFUSE_PUBLIC_KEY)" ] && echo "LANGFUSE_PUBLIC_KEY is set"
+[ -n "$(launchctl getenv LANGFUSE_SECRET_KEY)" ] && echo "LANGFUSE_SECRET_KEY is set"
+```
+
+Region rule: keep `LANGFUSE_BASE_URL` and `LANGFUSE_HOST` pointed to the same confirmed working Langfuse Cloud region. Do not assume `https://cloud.langfuse.com` is correct for all keys.
+
 ## Optional Langflow upgrade
 
 If `doctor` reports that the tracer lacks `flush()`, run:
@@ -70,4 +101,3 @@ This installs Langflow `release-1.10.0` into the detected local Langflow venv.
 - Do not print Langfuse public or secret key values.
 - Do not mutate evaluator config through undocumented APIs.
 - Do not claim Langflow emits `GENERATION` observations unless the local tracer actually uses generation APIs.
-
