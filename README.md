@@ -287,9 +287,9 @@ Apply the 1.10 upgrade after reviewing the dry-run:
 scripts/macos-upgrade-langflow-desktop-110 --yes --restart-app
 ```
 
-### Session-start activation
+### Activating Langflow using the Copilot harness
 
-Install these repo skills into the local Copilot skill directory and add them to the local `all-skills` loader if they should be available at every Copilot CLI session start:
+Install these repo skills into the local Copilot skill directory and add them to the local `all-skills` loader so the Copilot harness can activate the Langflow workflows at every Copilot CLI session start:
 
 ```text
 skills/langflow-fuse-interop-fix-observ/SKILL.md
@@ -305,7 +305,7 @@ langflow-desktop-restart
 langflow-desktop-upgrade-110
 ```
 
-After changing local skill registration, start a fresh Copilot CLI session if `/skill` does not immediately show the new skills.
+After changing local skill registration, start a fresh Copilot CLI session if `/skill` does not immediately show the new skills. The Copilot harness should then load these Langflow skills through `all-skills` before operational Langflow work.
 
 ## What this does not solve
 
