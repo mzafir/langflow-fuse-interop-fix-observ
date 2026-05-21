@@ -179,6 +179,25 @@ Langflow `1.10.0` may not be published on PyPI yet. If you need the unreleased b
 bin/langflow-fuse-interop-fix-observ upgrade-langflow-110
 ```
 
+macOS standalone script:
+
+```bash
+scripts/macos-upgrade-langflow-desktop-110 --dry-run
+scripts/macos-upgrade-langflow-desktop-110 --yes --restart-app
+```
+
+If Langflow Desktop needs launchd environment repair at the same time, pass the confirmed regional Langfuse host explicitly:
+
+```bash
+scripts/macos-upgrade-langflow-desktop-110 \
+  --yes \
+  --langfuse-host "https://us.cloud.langfuse.com" \
+  --enable-tracing \
+  --restart-app
+```
+
+Use the US host only for US-region Langfuse projects. The script does not print secret key values and does not edit Langfuse evaluator configuration through APIs.
+
 This installs these packages from `langflow-ai/langflow@release-1.10.0` into the detected Langflow venv:
 
 ```text
@@ -210,8 +229,120 @@ This runs diagnostics and prints the exact Langfuse UI evaluator changes. It doe
 
 Use `upgrade-langflow-110` separately if the diagnostic says the `flush()` fix is missing.
 
+## Skills and deterministic automations
+
+Every repo skill points to a deterministic script or CLI command. Keep skills thin; put operational logic in `scripts/` or `bin/` so behavior can be reviewed and changed without burying shell logic in a skill file.
+
+| Skill | Automation | Purpose |
+|---|---|---|
+| `skills/langflow-fuse-interop-fix-observ/SKILL.md` | `bin/langflow-fuse-interop-fix-observ doctor`, `launchctl-steps`, `evaluator-steps` | Diagnose SPAN vs GENERATION evaluator mismatch and print the safe UI/runbook steps. |
+| `skills/langflow-desktop-restart/SKILL.md` | `scripts/macos-restart-langflow-desktop` | Restart Langflow Desktop with launchd Langfuse/Langflow env injected, then verify backend env and health. |
+| `skills/langflow-desktop-upgrade-110/SKILL.md` | `scripts/macos-upgrade-langflow-desktop-110` | Upgrade the local macOS Langflow Desktop venv to the 1.10 release branch after dry-run/approval. |
+
+### Skill components
+
+Each skill has two parts:
+
+1. A thin `SKILL.md` file that tells Copilot CLI when the workflow applies and which command to run.
+2. A deterministic script or CLI command that performs the actual work.
+
+This separation is intentional. Update operational behavior in `scripts/` or `bin/`, not by embedding long shell programs in the skill text.
+
+### Step-by-step invocation
+
+Diagnose Langflow/Langfuse interop:
+
+```bash
+cd /Users/abdwahab/code/langflow-fuse-interop-fix-observ
+bin/langflow-fuse-interop-fix-observ doctor
+```
+
+Print the launchctl environment runbook:
+
+```bash
+bin/langflow-fuse-interop-fix-observ launchctl-steps
+```
+
+Print the Langfuse evaluator UI fix:
+
+```bash
+bin/langflow-fuse-interop-fix-observ evaluator-steps
+```
+
+Restart Langflow Desktop after key, host, region, or tracing env changes:
+
+```bash
+scripts/macos-restart-langflow-desktop
+```
+
+Dry-run the Langflow Desktop 1.10 upgrade:
+
+```bash
+scripts/macos-upgrade-langflow-desktop-110 --dry-run
+```
+
+Apply the 1.10 upgrade after reviewing the dry-run:
+
+```bash
+scripts/macos-upgrade-langflow-desktop-110 --yes --restart-app
+```
+
+### Session-start activation
+
+Install these repo skills into the local Copilot skill directory and add them to the local `all-skills` loader if they should be available at every Copilot CLI session start:
+
+```text
+skills/langflow-fuse-interop-fix-observ/SKILL.md
+skills/langflow-desktop-restart/SKILL.md
+skills/langflow-desktop-upgrade-110/SKILL.md
+```
+
+Expected `all-skills` entries:
+
+```text
+langflow-fuse-interop-fix-observ
+langflow-desktop-restart
+langflow-desktop-upgrade-110
+```
+
+After changing local skill registration, start a fresh Copilot CLI session if `/skill` does not immediately show the new skills.
+
 ## What this does not solve
 
 This does not make Langflow emit `GENERATION` observations. It aligns the Langfuse evaluator with what Langflow actually emits today: `SPAN` observations.
 
 For a deeper future fix, Langflow would need to emit generation observations directly or add a dedicated bridge component that calls Langfuse generation/observation APIs with explicit input/output.
+
+## Operational footnote: Langflow Desktop 401 trace-export failure
+
+Observed failure:
+
+```text
+Failed to export span batch code: 401, reason: Unauthorized
+Cannot connect to Langfuse: status_code: 401, body: Invalid credentials. Confirm that you've configured the correct host.
+```
+
+Root cause:
+
+1. The Langfuse key pair was valid for the US Langfuse Cloud region.
+2. `launchctl` had the corrected US-region values.
+3. The process that launched Langflow Desktop still had stale `LANGFUSE_HOST` and `LANGFUSE_BASE_URL` values for a different Langfuse Cloud region.
+4. Langflow Desktop inherited that stale launcher environment, then the backend inherited it from Desktop.
+5. The backend sent traces to the wrong regional host and Langfuse rejected the request with `401 Unauthorized`.
+
+Important detail: `.zshrc` is not a global macOS environment file. It only affects interactive zsh shells. macOS GUI apps inherit from launchd or from the process that runs `open`, so an already-running tool or terminal can keep stale values even after `.zshrc` is updated.
+
+Patch/fix applied:
+
+1. Confirmed the key pair authenticated against the intended regional Langfuse API without printing secrets.
+2. Loaded the intended `LANGFUSE_BASE_URL`, `LANGFUSE_HOST`, and tracing values into `launchctl`.
+3. Fully stopped the old Langflow Desktop/backend PIDs.
+4. Relaunched Langflow Desktop with the current launchd values explicitly injected into the `open` launcher environment.
+5. Verified the running backend process had the intended regional host and that `http://127.0.0.1:7860/api/v1/version` was healthy.
+6. Confirmed Langfuse returned recent traces and the 401 errors stopped.
+
+Use this deterministic restart automation when the same stale-launcher-env failure appears again:
+
+```bash
+scripts/macos-restart-langflow-desktop
+```

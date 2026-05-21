@@ -1,0 +1,289 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BRANCH="release-1.10.0"
+REPO_URL="https://github.com/langflow-ai/langflow.git"
+DEFAULT_VENV="$HOME/.langflow/.langflow-venv"
+LANGFLOW_APP="/Applications/Langflow .app"
+STATE_DIR="$HOME/.langflow/langflow-fuse-interop-fix-observ"
+DRY_RUN=0
+ASSUME_YES=0
+RESTART_APP=0
+NO_QUIT=0
+LANGFUSE_HOST_VALUE=""
+ENABLE_TRACING=0
+VENV="${LANGFLOW_VENV:-$DEFAULT_VENV}"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  scripts/macos-upgrade-langflow-desktop-110 [options]
+
+Options:
+  --venv PATH       Langflow Desktop virtualenv path.
+                    Default: ~/.langflow/.langflow-venv
+  --branch NAME     Langflow git branch/tag to install.
+                    Default: release-1.10.0
+  --yes             Actually perform the upgrade. Without this, the script
+                    prints the planned commands and exits.
+  --dry-run         Print planned commands and exit.
+  --restart-app     Re-open Langflow Desktop after a successful upgrade.
+  --no-quit         Do not ask/attempt to quit Langflow Desktop before upgrade.
+  --langfuse-host URL
+                    Explicitly set LANGFUSE_BASE_URL and LANGFUSE_HOST in
+                    macOS launchd for Langflow Desktop. Use the confirmed
+                    regional Langfuse URL for your project.
+  --enable-tracing  Set LANGFLOW_DEACTIVATE_TRACING=False in launchd.
+  -h, --help        Show this help.
+
+What it installs into the selected venv:
+  lfx @ git+https://github.com/langflow-ai/langflow.git@release-1.10.0#subdirectory=src/lfx
+  langflow-base[complete] @ git+https://github.com/langflow-ai/langflow.git@release-1.10.0#subdirectory=src/backend/base
+  langflow @ git+https://github.com/langflow-ai/langflow.git@release-1.10.0
+
+Safety:
+  - macOS only
+  - never prints Langfuse secrets
+  - saves pip freeze before upgrading
+  - requires --yes to mutate the venv
+  - does not mutate Langfuse evaluator config through APIs
+USAGE
+}
+
+log() {
+  printf '%s\n' "$*"
+}
+
+die() {
+  printf 'error: %s\n' "$*" >&2
+  exit 1
+}
+
+quote_cmd() {
+  printf '%q ' "$@"
+  printf '\n'
+}
+
+run_cmd() {
+  log "+ $(quote_cmd "$@")"
+  if [[ "$DRY_RUN" == "0" ]]; then
+    "$@"
+  fi
+}
+
+show_versions() {
+  local label="$1"
+  log "$label package versions:"
+  "$PY" -m pip show langflow langflow-base lfx langfuse 2>/dev/null \
+    | awk '
+      /^Name: / { name=$2 }
+      /^Version: / { print "  " name ": " $2 }
+    ' || true
+}
+
+show_tracer_status() {
+  local label="$1"
+  log "$label Langfuse tracer status:"
+  "$PY" - <<'PY'
+from pathlib import Path
+import sys
+
+venv = Path(sys.prefix)
+matches = list(venv.glob("lib/python*/site-packages/langflow/services/tracing/langfuse.py"))
+if not matches:
+    print("  tracer: not found")
+    raise SystemExit(0)
+source = matches[0].read_text(encoding="utf-8", errors="replace")
+emits_generation = (
+    "start_generation" in source
+    or 'as_type="generation"' in source
+    or "as_type='generation'" in source
+)
+print(f"  tracer: {matches[0]}")
+print(f"  emits SPAN observations: {'yes' if 'start_span' in source else 'no'}")
+print(f"  emits GENERATION observations: {'yes' if emits_generation else 'no'}")
+print(f"  contains flush(): {'yes' if '.flush()' in source else 'no'}")
+PY
+}
+
+print_secret_presence() {
+  log "launchd Langfuse secret presence:"
+  if [[ -n "$(launchctl getenv LANGFUSE_PUBLIC_KEY 2>/dev/null || true)" ]]; then
+    log "  LANGFUSE_PUBLIC_KEY: set"
+  else
+    log "  LANGFUSE_PUBLIC_KEY: not set"
+  fi
+  if [[ -n "$(launchctl getenv LANGFUSE_SECRET_KEY 2>/dev/null || true)" ]]; then
+    log "  LANGFUSE_SECRET_KEY: set"
+  else
+    log "  LANGFUSE_SECRET_KEY: not set"
+  fi
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --venv)
+      [[ $# -ge 2 ]] || die "--venv requires a path"
+      VENV="$2"
+      shift 2
+      ;;
+    --branch)
+      [[ $# -ge 2 ]] || die "--branch requires a name"
+      BRANCH="$2"
+      shift 2
+      ;;
+    --yes)
+      ASSUME_YES=1
+      shift
+      ;;
+    --dry-run)
+      DRY_RUN=1
+      shift
+      ;;
+    --restart-app)
+      RESTART_APP=1
+      shift
+      ;;
+    --no-quit)
+      NO_QUIT=1
+      shift
+      ;;
+    --langfuse-host)
+      [[ $# -ge 2 ]] || die "--langfuse-host requires a URL"
+      LANGFUSE_HOST_VALUE="$2"
+      shift 2
+      ;;
+    --enable-tracing)
+      ENABLE_TRACING=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "unknown argument: $1"
+      ;;
+  esac
+done
+
+[[ "$(uname -s)" == "Darwin" ]] || die "this script is macOS-only"
+
+VENV="${VENV/#\~/$HOME}"
+PY="$VENV/bin/python"
+PIP="$PY -m pip"
+TIMESTAMP="$(date -u '+%Y%m%dT%H%M%SZ')"
+BACKUP_DIR="$STATE_DIR/backups/$TIMESTAMP"
+FREEZE_FILE="$BACKUP_DIR/pip-freeze-before.txt"
+
+[[ -x "$PY" ]] || die "Langflow venv Python not found or not executable: $PY"
+
+INSTALL_SPECS=(
+  "lfx @ git+${REPO_URL}@${BRANCH}#subdirectory=src/lfx"
+  "langflow-base[complete] @ git+${REPO_URL}@${BRANCH}#subdirectory=src/backend/base"
+  "langflow @ git+${REPO_URL}@${BRANCH}"
+)
+
+cat <<EOF
+Langflow Desktop 1.10 branch upgrade plan
+=========================================
+venv:      $VENV
+python:    $PY
+branch:    $BRANCH
+backup:    $FREEZE_FILE
+app:       $LANGFLOW_APP
+dry-run:   $DRY_RUN
+restart:   $RESTART_APP
+
+What this script is doing:
+  1. Preserve current Langflow venv package state with pip freeze.
+  2. Install Langflow's release-1.10.0 branch into the Desktop venv.
+  3. Verify the installed Langfuse tracer still emits SPAN observations.
+  4. Verify the tracer contains the flush() behavior needed for reliable delivery.
+  5. Optionally set macOS launchd host/tracing env for Langflow Desktop.
+  6. Print the required Langfuse evaluator UI setting: Type = SPAN.
+
+EOF
+
+if [[ "$ASSUME_YES" != "1" && "$DRY_RUN" != "1" ]]; then
+  log "Refusing to mutate the venv without --yes."
+  log "Review the plan, then rerun with --yes when ready."
+  exit 2
+fi
+
+if [[ "$NO_QUIT" == "0" ]]; then
+  log "Stopping Langflow Desktop if it is running..."
+  run_cmd osascript -e 'tell application "Langflow " to quit' || true
+fi
+
+show_versions "Before upgrade"
+show_tracer_status "Before upgrade"
+print_secret_presence
+
+run_cmd mkdir -p "$BACKUP_DIR"
+if [[ "$DRY_RUN" == "0" ]]; then
+  "$PY" -m pip freeze > "$FREEZE_FILE"
+  log "Saved package backup: $FREEZE_FILE"
+else
+  log "+ $PY -m pip freeze > $FREEZE_FILE"
+fi
+
+log "Upgrading pip tooling..."
+run_cmd "$PY" -m pip install --upgrade pip setuptools wheel
+
+log "Installing Langflow packages from $REPO_URL@$BRANCH..."
+run_cmd "$PY" -m pip install --upgrade "${INSTALL_SPECS[@]}"
+
+log "Installed package versions:"
+if [[ "$DRY_RUN" == "0" ]]; then
+  show_versions "After upgrade"
+else
+  log "+ $PY -m pip show langflow langflow-base lfx langfuse"
+fi
+
+log "Verifying Langflow tracer flush support..."
+if [[ "$DRY_RUN" == "0" ]]; then
+  show_tracer_status "After upgrade"
+else
+  log "+ $PY - <verify tracer flush support>"
+fi
+
+if [[ -n "$LANGFUSE_HOST_VALUE" ]]; then
+  log "Setting launchd Langfuse host variables for Langflow Desktop..."
+  run_cmd launchctl setenv LANGFUSE_BASE_URL "$LANGFUSE_HOST_VALUE"
+  run_cmd launchctl setenv LANGFUSE_HOST "$LANGFUSE_HOST_VALUE"
+else
+  log "Launchd host values were not changed. Use --langfuse-host with the confirmed region if needed."
+fi
+
+if [[ "$ENABLE_TRACING" == "1" ]]; then
+  log "Enabling Langflow tracing through launchd..."
+  run_cmd launchctl setenv LANGFLOW_DEACTIVATE_TRACING "False"
+else
+  log "Tracing flag was not changed. Use --enable-tracing if needed."
+fi
+
+if [[ "$RESTART_APP" == "1" ]]; then
+  [[ -d "$LANGFLOW_APP" ]] || die "Langflow Desktop app not found: $LANGFLOW_APP"
+  log "Restarting Langflow Desktop..."
+  run_cmd open "$LANGFLOW_APP"
+fi
+
+cat <<EOF
+
+Upgrade script complete.
+
+Next checks:
+  bin/langflow-fuse-interop-fix-observ doctor --venv "$VENV"
+
+Required Langfuse evaluator UI setting:
+  Run on: Observations
+  Filter: Type any of SPAN
+
+Why:
+  Langflow's built-in tracer emits SPAN observations. The 1.10 branch upgrade is
+  for Langfuse client reuse / flush reliability; it does not make Langflow emit
+  GENERATION observations.
+
+If Langflow Desktop was open during upgrade, restart it before validating traces.
+EOF

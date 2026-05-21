@@ -35,6 +35,14 @@ bin/langflow-fuse-interop-fix-observ launchctl-steps
 bin/langflow-fuse-interop-fix-observ evaluator-steps
 ```
 
+All operational behavior must remain in deterministic repo automation:
+
+```text
+bin/langflow-fuse-interop-fix-observ
+scripts/macos-restart-langflow-desktop
+scripts/macos-upgrade-langflow-desktop-110
+```
+
 For a generic clone:
 
 ```bash
@@ -75,8 +83,7 @@ launchctl setenv LANGFLOW_DEACTIVATE_TRACING "False"
 Restart Langflow Desktop:
 
 ```bash
-osascript -e 'tell application "Langflow " to quit' || true
-open "/Applications/Langflow .app"
+scripts/macos-restart-langflow-desktop
 ```
 
 Do not print secret key values. To check secret presence:
@@ -93,7 +100,8 @@ Region rule: keep `LANGFUSE_BASE_URL` and `LANGFUSE_HOST` pointed to the same co
 If `doctor` reports that the tracer lacks `flush()`, run:
 
 ```bash
-bin/langflow-fuse-interop-fix-observ upgrade-langflow-110
+scripts/macos-upgrade-langflow-desktop-110 --dry-run
+scripts/macos-upgrade-langflow-desktop-110 --yes --restart-app
 ```
 
 This installs Langflow `release-1.10.0` into the detected local Langflow venv.

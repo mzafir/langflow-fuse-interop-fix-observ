@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_PATH="/Applications/Langflow .app"
+BACKEND_URL="http://127.0.0.1:7860/api/v1/version"
+
+lf_host="$(launchctl getenv LANGFUSE_HOST)"
+lf_base="$(launchctl getenv LANGFUSE_BASE_URL)"
+lf_pub="$(launchctl getenv LANGFUSE_PUBLIC_KEY)"
+lf_sec="$(launchctl getenv LANGFUSE_SECRET_KEY)"
+lf_tracing="$(launchctl getenv LANGFLOW_DEACTIVATE_TRACING)"
+
+if [[ -z "$lf_host" || -z "$lf_base" || -z "$lf_pub" || -z "$lf_sec" ]]; then
+  echo "launchd Langfuse env is incomplete"
+  echo "Required: LANGFUSE_HOST, LANGFUSE_BASE_URL, LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY"
+  exit 1
+fi
+
+echo "Using launchd Langfuse env:"
+echo "  LANGFUSE_HOST=$lf_host"
+echo "  LANGFUSE_BASE_URL=$lf_base"
+echo "  LANGFLOW_DEACTIVATE_TRACING=${lf_tracing:-False}"
+echo "  LANGFUSE_PUBLIC_KEY=<set len=${#lf_pub}>"
+echo "  LANGFUSE_SECRET_KEY=<set len=${#lf_sec}>"
+
+echo "Stopping Langflow Desktop/backend..."
+pids="$(
+  pgrep -f '/Applications/Langflow \.app/Contents/MacOS/Langflow |langflow.__main__ run --port 7860|uv run .*/langflow run --port 7860|export HOME=.*/langflow.*backend-only' || true
+)"
+
+if [[ -n "$pids" ]]; then
+  printf '%s\n' "$pids" | while read -r pid; do
+    [[ -n "$pid" ]] || continue
+    echo "  kill $pid"
+    kill "$pid" 2>/dev/null || true
+  done
+
+  sleep 4
+
+  printf '%s\n' "$pids" | while read -r pid; do
+    [[ -n "$pid" ]] || continue
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "  force kill $pid"
+      kill -9 "$pid" 2>/dev/null || true
+    fi
+  done
+
+  sleep 2
+else
+  echo "  no Langflow PIDs found"
+fi
+
+echo "Launching Langflow Desktop with launchd Langfuse env..."
+LANGFUSE_HOST="$lf_host" \
+LANGFUSE_BASE_URL="$lf_base" \
+LANGFUSE_PUBLIC_KEY="$lf_pub" \
+LANGFUSE_SECRET_KEY="$lf_sec" \
+LANGFLOW_DEACTIVATE_TRACING="${lf_tracing:-False}" \
+open "$APP_PATH"
+
+pid=""
+for _ in {1..45}; do
+  pid="$(pgrep -f 'python3 -m langflow.__main__ run --port 7860' | head -n 1 || true)"
+  [[ -n "$pid" ]] && break
+  sleep 1
+done
+
+if [[ -z "$pid" ]]; then
+  echo "Langflow backend did not appear"
+  exit 1
+fi
+
+echo "Langflow backend pid: $pid"
+
+envline="$(ps eww -p "$pid" || true)"
+for key in LANGFUSE_HOST LANGFUSE_BASE_URL LANGFLOW_DEACTIVATE_TRACING; do
+  val="$(printf '%s' "$envline" | tr ' ' '\n' | awk -F= -v key="$key" '$1==key {print substr($0, length(key)+2); exit}')"
+  printf '  %s=%s\n' "$key" "${val:-missing}"
+done
+
+for key in LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY; do
+  val="$(printf '%s' "$envline" | tr ' ' '\n' | awk -F= -v key="$key" '$1==key {print substr($0, length(key)+2); exit}')"
+  if [[ -n "$val" ]]; then
+    printf '  %s=<set len=%s>\n' "$key" "${#val}"
+  else
+    printf '  %s=<missing>\n' "$key"
+  fi
+done
+
+for _ in {1..30}; do
+  code="$(curl -s -o /dev/null -w '%{http_code}' "$BACKEND_URL" || true)"
+  if [[ "$code" == "200" ]]; then
+    echo "Langflow backend HTTP healthy"
+    exit 0
+  fi
+  sleep 1
+done
+
+echo "Langflow backend HTTP did not become healthy"
+exit 1

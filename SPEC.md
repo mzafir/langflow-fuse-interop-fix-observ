@@ -71,6 +71,32 @@ The script must:
 | `upgrade-langflow-110` | Explicitly install Langflow `release-1.10.0` branch into the local venv. |
 | `all` | Run `doctor` and `evaluator-steps`. |
 
+Standalone macOS script:
+
+```text
+scripts/macos-upgrade-langflow-desktop-110
+```
+
+The standalone script must support dry-run planning, explicit `--yes` before mutating the venv, package-state backup, release-branch install, tracer `flush()` verification, optional launchd host/tracing environment setup, and optional Langflow Desktop restart.
+
+Additional deterministic macOS restart script:
+
+```text
+scripts/macos-restart-langflow-desktop
+```
+
+The restart script must read Langfuse/Langflow env from `launchctl`, inject those values into the Langflow Desktop launch environment, stop only explicit Langflow Desktop/backend PIDs, reopen the app, verify the backend process env, verify `http://127.0.0.1:7860/api/v1/version`, and avoid printing Langfuse public or secret key values.
+
+## Skill requirements
+
+Skills must stay thin and invoke deterministic repo automation:
+
+| Skill | Required automation |
+|---|---|
+| `langflow-fuse-interop-fix-observ` | `bin/langflow-fuse-interop-fix-observ` |
+| `langflow-desktop-restart` | `scripts/macos-restart-langflow-desktop` |
+| `langflow-desktop-upgrade-110` | `scripts/macos-upgrade-langflow-desktop-110` |
+
 ## launchctl requirements
 
 The documentation must explain that Langflow Desktop inherits environment variables from macOS launchd, not from the user's current shell. Therefore `launchctl setenv` is required for GUI-launched Langflow Desktop.
